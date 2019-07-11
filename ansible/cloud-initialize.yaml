@@ -1,0 +1,45 @@
+---
+
+
+- name: "read cloud-init user data from an attached iso device (/dev/sr0)"
+  hosts: localhost
+  become: yes
+
+  tasks:
+
+    - name: mount /dev/sr0
+      mount:
+        path: /mnt/archlinux_cloud_init
+        src: /dev/sr0
+        fstype: iso9660
+        opts: ro,noauto
+        state: mounted
+
+      # https://cloudinit.readthedocs.io/en/latest/topics/examples.html
+    - name: include content of a yaml file meeting the specification of cloud-init user-data
+      include_vars: /mnt/archlinux_cloud_init/user-data
+
+    - debug:
+        msg: hostname will be set to {{ hostname }}
+
+    - name: set hostname to {{ hostname }}  
+      hostname:
+        name: "{{ hostname }}"
+
+    - name: restart the systemd networkmanager service
+      service:
+        name: NetworkManager
+        state: restarted        
+
+    - name: create a semaphore file so the cloud-initialize systemd service will not execute
+      file:
+        path: /home/provision/cloud-initialize/cloud-initialize.disabled
+        state: touch
+
+    - name: unmount /dev/sr0
+      mount:
+        path: /mnt/archlinux_cloud_init
+        src: /dev/sr0
+        fstype: iso9660
+        opts: ro,noauto
+        state: absent        

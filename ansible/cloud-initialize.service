@@ -1,0 +1,14 @@
+[Unit]
+Description=execute a one-time cloud intialization script
+ConditionPathExists=/home/provision/cloud-initialize/cloud-initialize.yaml
+ConditionPathExists=!/home/provision/cloud-initialize/cloud-initialize.disabled
+ConditionPathExists=/usr/bin/ansible-playbook
+
+[Service]
+Type=oneshot
+ExecStart=ansible-playbook /home/provision/cloud-initialize/cloud-initialize.yaml
+RemainAfterExit=true
+StandardOutput=file:/var/log/cloud-initialize-output.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,153 @@
+---
+
+
+- name: "bootstrap functions to be executed in a chroot session"
+  hosts: localhost
+  become: yes
+
+  vars:
+
+    user:
+      name: provision
+      group: provision
+      uid: "1030"
+      gid: "1030"
+      home: /home/provision
+      shell: "/bin/bash"
+      groups: [ "wheel" ]
+      ssh_keys_authorized:
+        - { ssh_key: "{{ lookup('file', 'provision.authorized_key.pub') }}" }
+    
+    packages:
+      - git
+      - grub
+      - networkmanager
+      - openssh
+      - sudo
+
+  tasks:
+
+    - name: install packages
+      package:
+        state: present
+        name: "{{ packages }}"
+
+    - name: enable network manager service
+      service:
+        name: NetworkManager
+        enabled: yes
+
+    - name: enable sshd service
+      service:
+        name: sshd
+        enabled: yes
+
+    - name: push an sshd_config that allows only {{ user.name }} to connect
+      copy:
+        dest: /etc/ssh/sshd_config
+        content: |
+          AuthorizedKeysFile  .ssh/authorized_keys
+          PasswordAuthentication no
+          ChallengeResponseAuthentication no
+          UsePAM yes
+          Subsystem sftp  /usr/lib/ssh/sftp-server
+          AllowUsers    {{ user.name }}
+
+    - name: set root password
+      user:
+        name: root
+        password: "{{ lookup('file', 'secret') }}"
+
+    - name: "{{ user.group }}:  create group"
+      group:
+        name: "{{ user.group }}"
+        state: present
+
+    - name: "{{ user.group }}:  set gid if defined"
+      group:
+        name: "{{ user.group }}"
+        gid: "{{ user.gid }}"
+      when:
+        - user.gid is defined
+        - user.gid != ''
+
+    - name: "{{ user.name }}:  create and assign to group {{ user.group }}"
+      user:
+        name: "{{ user.name }}"
+        group: "{{ user.group }}"
+        password_lock: yes
+        shell: "{{ user.shell }}"
+
+    - name: "{{ user.name }}: set uid if defined"
+      user:
+        name: "{{ user.name }}"
+        uid: "{{ user.uid }}"
+      when:
+        - user.gid is defined and user.gid != ''
+        - user.uid is defined and user.uid != ''
+
+    - name: "{{ user.name }}:  add to groups"
+      user:
+        name: "{{ user.name }}"
+        groups: "{{ item }}"
+        append: yes
+      with_items:
+        - "{{ user.groups }}"
+
+    - name: create .ssh directory if there are keys to propogate
+      file:
+        path: "{{ user.home }}/.ssh"
+        state: directory
+        mode: '0700'
+      when: (user.ssh_keys_public is defined and user.ssh_keys_public != [])
+            or (user.ssh_keys_private is defined and user.ssh_keys_private != [])
+            or (user.ssh_keys_authorized is defined and user.ssh_keys_authorized != [])
+
+    - debug:
+        msg: authorized {{ user.ssh_keys_authorized }}
+
+    - name: "{{ user.name }}:  propogate authorized public ssh keys"
+      authorized_key:
+        user: "{{ user.name }}"
+        key: "{{ item.ssh_key }}"
+        state: present
+        exclusive: true
+      with_items: "{{ user.ssh_keys_authorized | default([]) }}"
+      when: user.ssh_keys_authorized is defined and user.ssh_keys_authorized != []
+      ignore_errors: no
+      no_log: true                
+
+    - name: allow {{ user.name }} to execute any command without a password
+      copy:
+        dest: /etc/sudoers.d/{{ user.name }}
+        content: |
+          {{ user.name }} ALL=(ALL) NOPASSWD:ALL
+
+    - name: create destination for cloud-initialization related files
+      file:
+        path: /home/provision/cloud-initialize
+        state: directory
+        mode: '0755'
+        owner: provision
+        group: provision
+
+    - name: copy cloud-initialization playbooks 
+      copy:
+        owner: provision
+        group: provision
+        src: "{{ item }}"
+        dest: /home/provision/cloud-initialize/
+      with_items:
+        - cloud-initialize.yaml
+
+    - name: copy cloud-initialize systemd service
+      copy:
+        src: "{{ item }}"
+        dest: /usr/lib/systemd/system/
+      with_items:
+        - cloud-initialize.service
+
+    - name: enable cloud-initialize service
+      service:
+        name: cloud-initialize
+        enabled: yes        
